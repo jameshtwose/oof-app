@@ -52,7 +52,9 @@ def read_root():
 
     """
     return HTMLResponse(
-        "<h2>Hi, this is a web UI for the orchards of flavour data.</h2>"
+        """<h2>Hi, this is the API for the orchards of flavour data. Check out
+        <a href="/home">our web UI</a> to get started.
+        </h2>"""
     )
 
 
