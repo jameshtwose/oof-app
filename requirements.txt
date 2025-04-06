@@ -3,3 +3,5 @@ uvicorn
 httpx
 pandas
 jinja2
+chromadb
+python-multipart

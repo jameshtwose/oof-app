@@ -10,6 +10,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the application code into the container
 COPY . .
 
+# load the vector store using the create_and_load_vector_db.py script
+RUN python3.11 create_and_load_vector_db.py
+
 # Expose the port the app runs on
 EXPOSE 8080
 

@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Request, Depends, Query
+from fastapi import FastAPI, HTTPException, Request, Depends, Query, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Template
@@ -8,7 +8,7 @@ import pandas as pd
 import httpx
 from datetime import date
 
-from helpers import render_plants_template
+from helpers import render_plants_template, get_chroma_recommendation
 
 app = FastAPI(
     title="Orchards of Flavour API",
@@ -30,11 +30,17 @@ app.add_middleware(
 
 # app.mount("/static", StaticFiles(directory="static"), name="static")
 
-
-df = pd.read_csv(
-    "data/plants-2025-04-05.csv",
-    encoding="utf-8",
+# get the latest csv file
+files = sorted(
+    [f for f in os.listdir("data") if f.endswith(".csv")],
+    key=lambda x: os.path.getmtime(os.path.join("data", x)),
 )
+latest_file = files[-1] if files else None
+if latest_file:
+    df = pd.read_csv(
+        os.path.join("data", latest_file),
+        encoding="utf-8",
+    )
 
 
 @app.get("/", tags=["Root"])
@@ -73,7 +79,9 @@ def get_index():
 @app.get("/plants", tags=["Plants"])
 def get_plants(
     query: str,
+    limit: int,
     return_type: str = "html",
+    search_type: str = "chroma",
 ):
     """Get plants based on the query.
     
@@ -91,9 +99,18 @@ def get_plants(
         The response containing the plants based on the query.
     
     """
-    filtered_plants = df[
-        df.apply(lambda row: row.astype(str).str.contains(query, case=False).any(), axis=1)
-    ]
+    if search_type == "chroma":
+        # Get recommendations from the Chroma vector database
+        id_list, similarity_list = get_chroma_recommendation(
+            prompt_list=[query],
+            amount_recommendations=limit,
+        )
+        filtered_plants = df[df["ID"].isin(id_list)]
+        filtered_plants.loc[:, "similarity"] = similarity_list
+    else:
+        filtered_plants = df[
+            df.apply(lambda row: row.astype(str).str.contains(query, case=False).any(), axis=1)
+        ].head(limit)
     if filtered_plants.empty:
         if return_type == "html":
             return HTMLResponse(
@@ -184,3 +201,51 @@ def get_plant_by_id(
             status_code=400,
             detail="Invalid return type. Must be 'html' or 'json'.",
         )
+    
+
+@app.post("/plants-csv-upload", tags=["Plants"])
+async def upload_csv(
+    request: Request,
+    file: UploadFile = File(...),
+):
+    """Upload a CSV file and return its contents.
+    
+    Parameters
+    ----------
+    request : Request
+        The request object.
+    file : bytes
+        The uploaded CSV file.
+    
+    Returns
+    -------
+    JSONResponse
+        The contents of the uploaded CSV file.
+    
+    """
+    # Save the uploaded file to a temporary location
+    file_path = f"data/plants-{date.today()}.csv"
+    # Check if the file already exists
+    if os.path.exists(file_path):
+        raise HTTPException(
+            status_code=400,
+            detail="File already exists.",
+        )
+    with open(file_path, "wb") as f:
+        f.write(file.file.read())
+
+    # if there is more than 3 files in the directory, delete the oldest one
+    files = sorted(
+        [f for f in os.listdir("data") if f.endswith(".csv")],
+        key=lambda x: os.path.getmtime(os.path.join("data", x)),
+    )
+    if len(files) > 3:
+        os.remove(os.path.join("data", files[0]))
+
+    # Read the CSV file into a DataFrame
+    df = pd.read_csv(file_path)
+    # Return the contents of the uploaded CSV file
+    return {
+        "message": "CSV file uploaded successfully.",
+        "data-head": df.head(5).astype(str).to_dict(orient="records"),
+    }
